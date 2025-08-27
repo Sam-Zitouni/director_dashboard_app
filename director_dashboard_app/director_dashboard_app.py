@@ -3,13 +3,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 import psycopg2
-from psycopg2 import sql
 import warnings
+
 warnings.filterwarnings('ignore')
 
-# Set page configuration
+# ==============================
+# CONFIG
+# ==============================
 st.set_page_config(
     page_title="Director Dashboard",
     page_icon="📊",
@@ -17,6 +19,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+
+# ==============================
+# DASHBOARD CLASS
+# ==============================
 class DirectorDashboard:
     def __init__(self, period="30d"):
         self.connection = None
@@ -50,7 +56,6 @@ class DirectorDashboard:
         except Exception as e:
             st.error(f"❌ Error connecting to database: {e}")
 
-
     def execute_query(self, query):
         """Execute query and safely handle corrupted UTF-8 bytes."""
         try:
@@ -78,7 +83,9 @@ class DirectorDashboard:
         if self.connection:
             self.connection.close()
 
-    # Financial KPIs
+    # ==============================
+    # FINANCIAL KPIs
+    # ==============================
     def get_gross_revenue(self):
         query = f"""
         SELECT COALESCE(SUM(debit), 0) as gross_revenue 
@@ -106,7 +113,9 @@ class DirectorDashboard:
         """
         return self.execute_query(query)['total_commissions'].iloc[0]
 
-    # Operational KPIs
+    # ==============================
+    # OPERATIONAL KPIs
+    # ==============================
     def get_fleet_utilization(self):
         query = """
         SELECT 
@@ -292,7 +301,7 @@ class DirectorDashboard:
         SELECT 
             a.name as agency,
             COALESCE(SUM(ar.debit), 0) as revenue,
-            COALESce(SUM(ar.credit), 0) as cost,
+            COALESCE(SUM(ar.credit), 0) as cost,
             COALESCE(SUM(ar.debit - ar.credit), 0) as net_profit,
             CASE WHEN COALESCE(SUM(ar.debit), 0) > 0 THEN
                 ROUND(((COALESCE(SUM(ar.debit - ar.credit), 0) * 100.0 / COALESCE(SUM(ar.debit), 0))::numeric), 2)
@@ -307,10 +316,14 @@ class DirectorDashboard:
         """
         return self.execute_query(query)
 
+
+# ==============================
+# STREAMLIT APP
+# ==============================
 def main():
     st.title("📊 Director Dashboard")
-    
-    # Sidebar for period selection
+
+    # Sidebar
     with st.sidebar:
         st.header("Settings")
         period = st.selectbox(
@@ -319,32 +332,28 @@ def main():
             index=0,
             help="Select the time period for analysis"
         )
-        
+
         st.header("Quick Actions")
         if st.button("🔄 Refresh Data"):
             st.rerun()
-        
+
         if st.button("📊 Download Reports"):
             download_reports()
 
-    # Initialize dashboard
+    # Dashboard
     dashboard = DirectorDashboard(period)
-    
-    # Display KPIs
+
+    # KPIs
     col1, col2, col3, col4 = st.columns(4)
-    
     with col1:
         revenue = dashboard.get_gross_revenue()
         st.metric("Gross Revenue", f"${revenue:,.2f}")
-    
     with col2:
         profit = dashboard.get_net_profit()
         st.metric("Net Profit", f"${profit:,.2f}", delta_color="inverse" if profit < 0 else "normal")
-    
     with col3:
         commission = dashboard.get_commission_costs()
         st.metric("Commission Costs", f"${commission:,.2f}")
-    
     with col4:
         utilization, active, total = dashboard.get_fleet_utilization()
         st.metric("Fleet Utilization", f"{utilization}%", f"{active}/{total} vehicles")
@@ -352,15 +361,12 @@ def main():
     # Operational Metrics
     st.subheader("🚗 Operational Efficiency")
     col1, col2, col3 = st.columns(3)
-    
     with col1:
         rofa, _, _ = dashboard.get_rofa()
         st.metric("ROFA", f"${rofa:,.2f}", "per vehicle")
-    
     with col2:
         rask = dashboard.get_rask_simple()
         st.metric("RASK", f"${rask:,.4f}", "per seat km")
-    
     with col3:
         retention_data = dashboard.get_customer_retention()
         retention_rate = retention_data['retention_rate'].iloc[0] if not retention_data.empty else 0
@@ -370,14 +376,21 @@ def main():
     st.subheader("📱 Booking Source Breakdown")
     sources = dashboard.get_booking_sources()
     if not sources.empty:
-        fig, ax = plt.subplots()
-        ax.pie(sources['total_revenue'], labels=sources['source_type'], autopct='%1.1f%%')
-        st.pyplot(fig)
-        
-        st.dataframe(sources.style.format({
-            'booking_count': '{:,}',
-            'total_revenue': '${:,.2f}'
-        }))
+        sources = sources[sources['total_revenue'] > 0]
+        if not sources.empty and sources['total_revenue'].sum() > 0:
+            fig, ax = plt.subplots()
+            ax.pie(
+                sources['total_revenue'],
+                labels=sources['source_type'],
+                autopct='%1.1f%%'
+            )
+            st.pyplot(fig)
+            st.dataframe(sources.style.format({
+                'booking_count': '{:,}',
+                'total_revenue': '${:,.2f}'
+            }))
+        else:
+            st.info("⚠️ No valid booking revenue to display in pie chart")
     else:
         st.info("No booking source data available")
 
@@ -397,7 +410,7 @@ def main():
     # Monthly Trends
     st.subheader("📈 Monthly Trends")
     trends = dashboard.get_monthly_trends()
-    if not trends.empty:
+    if not trends.empty and trends['revenue'].sum() > 0:
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.plot(trends['month'], trends['revenue'], marker='o', label='Revenue')
         ax.plot(trends['month'], trends['estimated_cost'], marker='o', label='Cost')
@@ -406,7 +419,6 @@ def main():
         ax.legend()
         ax.tick_params(axis='x', rotation=45)
         st.pyplot(fig)
-        
         st.dataframe(trends.style.format({
             'booking_count': '{:,}',
             'revenue': '${:,.2f}',
@@ -415,37 +427,27 @@ def main():
     else:
         st.info("No trend data available")
 
+
+# ==============================
+# REPORT DOWNLOADS
+# ==============================
 def download_reports():
     dashboard = DirectorDashboard()
     trends = dashboard.get_monthly_trends()
     routes = dashboard.get_route_profitability()
     agencies = dashboard.get_agency_profitability()
-    
-    # Create downloadable data
+
     csv1 = trends.to_csv(index=False)
     csv2 = routes.to_csv(index=False)
     csv3 = agencies.to_csv(index=False)
-    
-    st.download_button(
-        label="📥 Download Monthly Trends",
-        data=csv1,
-        file_name="monthly_trends.csv",
-        mime="text/csv"
-    )
-    
-    st.download_button(
-        label="📥 Download Route Profitability",
-        data=csv2,
-        file_name="route_profitability.csv",
-        mime="text/csv"
-    )
-    
-    st.download_button(
-        label="📥 Download Agency Performance",
-        data=csv3,
-        file_name="agency_performance.csv",
-        mime="text/csv"
-    )
 
+    st.download_button("📥 Download Monthly Trends", csv1, "monthly_trends.csv", "text/csv")
+    st.download_button("📥 Download Route Profitability", csv2, "route_profitability.csv", "text/csv")
+    st.download_button("📥 Download Agency Performance", csv3, "agency_performance.csv", "text/csv")
+
+
+# ==============================
+# RUN APP
+# ==============================
 if __name__ == "__main__":
     main()
