@@ -42,31 +42,20 @@ class DirectorDashboard:
         else:
             self.interval = "30 days"
 
-    import os
-
-def connect(self):
+    def connect(self):
     try:
-        # First try Streamlit secrets
-        if "postgres" in st.secrets:
-            db_config = st.secrets["postgres"]
-            self.connection = psycopg2.connect(
-                host=db_config["host"],
-                port=db_config["port"],
-                database=db_config["database"],
-                user=db_config["user"],
-                password=db_config["password"]
-            )
-        else:
-            # Fallback: use environment variables or hardcoded credentials
-            self.connection = psycopg2.connect(
-                host=os.getenv("DB_HOST", "51.178.30.30"),
-                port=os.getenv("DB_PORT", "5432"),
-                database=os.getenv("DB_NAME", "rawahel_test"),
-                user=os.getenv("DB_USER", "readonly_user"),
-                password=os.getenv("DB_PASSWORD", "uJz8o99awc")
-            )
+        # Use direct credentials for testing locally
+        self.connection = psycopg2.connect(
+            host="51.178.30.30",
+            port="5432",
+            database="rawahel_test",
+            user="readonly_user",
+            password="uJz8o99awc"
+        )
+        st.success("✅ Connected to database")
     except Exception as e:
         st.error(f"❌ Error connecting to database: {e}")
+        self.connection = None
 
 
     def execute_query(self, query):
