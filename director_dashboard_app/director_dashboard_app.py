@@ -43,20 +43,16 @@ class DirectorDashboard:
             self.interval = "30 days"
 
     def connect(self):
-    try:
-        # Use direct credentials for testing locally
-        self.connection = psycopg2.connect(
-            host="51.178.30.30",
-            port="5432",
-            database="rawahel_test",
-            user="readonly_user",
-            password="uJz8o99awc"
-        )
-        st.success("✅ Connected to database")
-    except Exception as e:
-        st.error(f"❌ Error connecting to database: {e}")
-        self.connection = None
-
+        try:
+            self.connection = psycopg2.connect(
+                host=st.secrets["postgres"]["host"],
+                port=st.secrets["postgres"]["port"],
+                database=st.secrets["postgres"]["database"],
+                user=st.secrets["postgres"]["user"],
+                password=st.secrets["postgres"]["password"]
+            )
+        except Exception as e:
+            st.error(f"❌ Error connecting to database: {e}")
 
     def execute_query(self, query):
         """Execute query and safely handle corrupted UTF-8 bytes."""
