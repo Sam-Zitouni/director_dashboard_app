@@ -56,28 +56,25 @@ class DirectorDashboard:
         except Exception as e:
             st.error(f"❌ Error connecting to database: {e}")
 
-    def execute_query(self, query):
-        """Execute query and safely handle corrupted UTF-8 bytes."""
-        try:
-            with self.connection.cursor() as cursor:
-                cursor.execute(query)
-                colnames = [desc[0] for desc in cursor.description]
-                data = cursor.fetchall()
+def get_gross_revenue(self):
+    query = "SELECT SUM(amount) AS gross_revenue FROM your_table"  # adjust your query
+    df = self.execute_query(query)
+    
+    if df.empty:
+        st.warning("No data returned for gross revenue.")
+        return 0  # or None
+    
+    # Print column names to debug
+    st.write("Columns returned by query:", df.columns.tolist())
+    
+    # Use the correct column name safely
+    col_name = 'gross_revenue'
+    if col_name in df.columns:
+        return df[col_name].iloc[0]
+    else:
+        st.error(f"Column '{col_name}' not found in query result.")
+        return 0
 
-                safe_data = []
-                for row in data:
-                    safe_row = []
-                    for val in row:
-                        if isinstance(val, bytes):
-                            safe_row.append(val.decode("utf-8", errors="replace"))
-                        else:
-                            safe_row.append(val)
-                    safe_data.append(safe_row)
-
-                return pd.DataFrame(safe_data, columns=colnames)
-        except Exception as e:
-            st.error(f"Query error: {e}")
-            return pd.DataFrame()
 
     def close(self):
         if self.connection:
