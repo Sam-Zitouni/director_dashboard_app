@@ -19,7 +19,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-
 # ==============================
 # DASHBOARD CLASS
 # ==============================
@@ -31,7 +30,6 @@ class DirectorDashboard:
         self.set_period(period)
 
     def set_period(self, period):
-        """Set analysis period dynamically."""
         self.period_label = period
         if period == "30d":
             self.interval = "30 days"
@@ -56,25 +54,28 @@ class DirectorDashboard:
         except Exception as e:
             st.error(f"❌ Error connecting to database: {e}")
 
-def get_gross_revenue(self):
-    query = "SELECT SUM(amount) AS gross_revenue FROM your_table"  # adjust your query
-    df = self.execute_query(query)
-    
-    if df.empty:
-        st.warning("No data returned for gross revenue.")
-        return 0  # or None
-    
-    # Print column names to debug
-    st.write("Columns returned by query:", df.columns.tolist())
-    
-    # Use the correct column name safely
-    col_name = 'gross_revenue'
-    if col_name in df.columns:
-        return df[col_name].iloc[0]
-    else:
-        st.error(f"Column '{col_name}' not found in query result.")
-        return 0
+    def execute_query(self, query):
+        """Execute query and safely handle corrupted UTF-8 bytes."""
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query)
+                colnames = [desc[0] for desc in cursor.description]
+                data = cursor.fetchall()
 
+                safe_data = []
+                for row in data:
+                    safe_row = []
+                    for val in row:
+                        if isinstance(val, bytes):
+                            safe_row.append(val.decode("utf-8", errors="replace"))
+                        else:
+                            safe_row.append(val)
+                    safe_data.append(safe_row)
+
+                return pd.DataFrame(safe_data, columns=colnames)
+        except Exception as e:
+            st.error(f"Query error: {e}")
+            return pd.DataFrame()
 
     def close(self):
         if self.connection:
@@ -90,17 +91,23 @@ def get_gross_revenue(self):
         WHERE type = 'revenue' 
         AND date >= CURRENT_DATE - INTERVAL '{self.interval}'
         """
-        return self.execute_query(query)['gross_revenue'].iloc[0]
+        df = self.execute_query(query)
+        if df.empty or 'gross_revenue' not in df.columns:
+            return 0
+        return df['gross_revenue'].iloc[0]
 
     def get_net_profit(self):
         query = f"""
         SELECT 
-            COALESCE(SUM(CASE WHEN type = 'revenue' THEN debit ELSE 0 END), 0) -
+            COALESCE(SUM(CASE WHEN type = 'revenue' THEN debit ELSE 0 END), 0) - 
             COALESCE(SUM(CASE WHEN type = 'expense' THEN credit ELSE 0 END), 0) as net_profit
         FROM transactions
         WHERE date >= CURRENT_DATE - INTERVAL '{self.interval}'
         """
-        return self.execute_query(query)['net_profit'].iloc[0]
+        df = self.execute_query(query)
+        if df.empty or 'net_profit' not in df.columns:
+            return 0
+        return df['net_profit'].iloc[0]
 
     def get_commission_costs(self):
         query = f"""
@@ -108,7 +115,10 @@ def get_gross_revenue(self):
         FROM agency_commissions 
         WHERE created_at >= CURRENT_DATE - INTERVAL '{self.interval}'
         """
-        return self.execute_query(query)['total_commissions'].iloc[0]
+        df = self.execute_query(query)
+        if df.empty or 'total_commissions' not in df.columns:
+            return 0
+        return df['total_commissions'].iloc[0]
 
     # ==============================
     # OPERATIONAL KPIs
@@ -125,8 +135,10 @@ def get_gross_revenue(self):
         LEFT JOIN vehicle_schedules vs ON v.id = vs.vehicle_id 
         WHERE v.status = true
         """
-        result = self.execute_query(query)
-        return result['utilization_rate'].iloc[0], result['active_vehicles'].iloc[0], result['total_vehicles'].iloc[0]
+        df = self.execute_query(query)
+        if df.empty:
+            return 0, 0, 0
+        return df['utilization_rate'].iloc[0], df['active_vehicles'].iloc[0], df['total_vehicles'].iloc[0]
 
     def get_rofa(self):
         query = f"""
@@ -142,8 +154,10 @@ def get_gross_revenue(self):
         AND t.date >= CURRENT_DATE - INTERVAL '{self.interval}'
         AND v.status = true
         """
-        result = self.execute_query(query)
-        return result['rofa'].iloc[0], result['total_revenue'].iloc[0], result['total_fleet'].iloc[0]
+        df = self.execute_query(query)
+        if df.empty:
+            return 0, 0, 0
+        return df['rofa'].iloc[0], df['total_revenue'].iloc[0], df['total_fleet'].iloc[0]
 
     def get_rask_simple(self):
         query = f"""
@@ -176,11 +190,14 @@ def get_gross_revenue(self):
             ELSE 0 END as rask
         FROM revenue_data r, booking_count b, avg_seats s, avg_distance d
         """
-        result = self.execute_query(query)
-        if not result.empty:
-            return result['rask'].iloc[0]
-        return 0
+        df = self.execute_query(query)
+        if df.empty or 'rask' not in df.columns:
+            return 0
+        return df['rask'].iloc[0]
 
+    # ==============================
+    # CUSTOMER & BOOKING KPIs
+    # ==============================
     def get_customer_retention(self):
         query = f"""
         WITH customer_bookings AS (
@@ -266,33 +283,6 @@ def get_gross_revenue(self):
         """
         return self.execute_query(query)
 
-    def get_route_profitability(self):
-        query = f"""
-        SELECT 
-            r.name as route,
-            COALESCE(SUM(b.total_price), 0) as revenue,
-            COALESCE(SUM(
-                CASE 
-                    WHEN b.total_price > 0 THEN b.total_price * 0.6
-                    ELSE 0 
-                END
-            ), 0) as estimated_cost,
-            COALESCE(SUM(b.total_price), 0) - COALESCE(SUM(
-                CASE 
-                    WHEN b.total_price > 0 THEN b.total_price * 0.6
-                    ELSE 0 
-                END
-            ), 0) as profit
-        FROM routes r
-        LEFT JOIN bookings b ON r.id = b.route_id
-        WHERE b.created_at >= CURRENT_DATE - INTERVAL '{self.interval}'
-        GROUP BY r.name
-        HAVING COALESCE(SUM(b.total_price), 0) > 0
-        ORDER BY profit DESC
-        LIMIT 15
-        """
-        return self.execute_query(query)
-
     def get_agency_profitability(self):
         query = f"""
         SELECT 
@@ -312,7 +302,6 @@ def get_gross_revenue(self):
         LIMIT 10
         """
         return self.execute_query(query)
-
 
 # ==============================
 # STREAMLIT APP
@@ -355,93 +344,19 @@ def main():
         utilization, active, total = dashboard.get_fleet_utilization()
         st.metric("Fleet Utilization", f"{utilization}%", f"{active}/{total} vehicles")
 
-    # Operational Metrics
-    st.subheader("🚗 Operational Efficiency")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        rofa, _, _ = dashboard.get_rofa()
-        st.metric("ROFA", f"${rofa:,.2f}", "per vehicle")
-    with col2:
-        rask = dashboard.get_rask_simple()
-        st.metric("RASK", f"${rask:,.4f}", "per seat km")
-    with col3:
-        retention_data = dashboard.get_customer_retention()
-        retention_rate = retention_data['retention_rate'].iloc[0] if not retention_data.empty else 0
-        st.metric("Customer Retention", f"{retention_rate}%")
-
-    # Booking Sources
-    st.subheader("📱 Booking Source Breakdown")
-    sources = dashboard.get_booking_sources()
-    if not sources.empty:
-        sources = sources[sources['total_revenue'] > 0]
-        if not sources.empty and sources['total_revenue'].sum() > 0:
-            fig, ax = plt.subplots()
-            ax.pie(
-                sources['total_revenue'],
-                labels=sources['source_type'],
-                autopct='%1.1f%%'
-            )
-            st.pyplot(fig)
-            st.dataframe(sources.style.format({
-                'booking_count': '{:,}',
-                'total_revenue': '${:,.2f}'
-            }))
-        else:
-            st.info("⚠️ No valid booking revenue to display in pie chart")
-    else:
-        st.info("No booking source data available")
-
-    # Agency Performance
-    st.subheader("🏆 Top Agencies by Profitability")
-    agencies = dashboard.get_agency_profitability()
-    if not agencies.empty:
-        st.dataframe(agencies.head(5).style.format({
-            'revenue': '${:,.2f}',
-            'cost': '${:,.2f}',
-            'net_profit': '${:,.2f}',
-            'profit_margin': '{:.2f}%'
-        }))
-    else:
-        st.info("No agency data available")
-
-    # Monthly Trends
-    st.subheader("📈 Monthly Trends")
-    trends = dashboard.get_monthly_trends()
-    if not trends.empty and trends['revenue'].sum() > 0:
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.plot(trends['month'], trends['revenue'], marker='o', label='Revenue')
-        ax.plot(trends['month'], trends['estimated_cost'], marker='o', label='Cost')
-        ax.set_xlabel('Month')
-        ax.set_ylabel('Amount ($)')
-        ax.legend()
-        ax.tick_params(axis='x', rotation=45)
-        st.pyplot(fig)
-        st.dataframe(trends.style.format({
-            'booking_count': '{:,}',
-            'revenue': '${:,.2f}',
-            'estimated_cost': '${:,.2f}'
-        }))
-    else:
-        st.info("No trend data available")
-
-
 # ==============================
 # REPORT DOWNLOADS
 # ==============================
 def download_reports():
     dashboard = DirectorDashboard()
     trends = dashboard.get_monthly_trends()
-    routes = dashboard.get_route_profitability()
     agencies = dashboard.get_agency_profitability()
 
     csv1 = trends.to_csv(index=False)
-    csv2 = routes.to_csv(index=False)
-    csv3 = agencies.to_csv(index=False)
+    csv2 = agencies.to_csv(index=False)
 
     st.download_button("📥 Download Monthly Trends", csv1, "monthly_trends.csv", "text/csv")
-    st.download_button("📥 Download Route Profitability", csv2, "route_profitability.csv", "text/csv")
-    st.download_button("📥 Download Agency Performance", csv3, "agency_performance.csv", "text/csv")
-
+    st.download_button("📥 Download Agency Performance", csv2, "agency_performance.csv", "text/csv")
 
 # ==============================
 # RUN APP
